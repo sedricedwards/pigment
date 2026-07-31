@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en" data-motion="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pigment — a color instrument</title>
+<meta name="description" content="A palette instrument: perceptual OKLCH generation, swatch locking, image extraction, WCAG + APCA contrast, live UI preview, and exports to CSS, Tailwind, JSON and hex.">
+<meta name="color-scheme" content="dark">
+<meta property="og:title" content="Pigment — a color instrument">
+<meta property="og:description" content="Perceptual OKLCH palette generation, locking, image extraction, WCAG + APCA contrast, live UI preview, four export formats.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@300..600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230b0b0c'/><rect x='5' y='7' width='5' height='18' fill='%23e2604a'/><rect x='11' y='7' width='5' height='18' fill='%23e8b04b'/><rect x='17' y='7' width='5' height='18' fill='%234f9d8c'/><rect x='23' y='7' width='4' height='18' fill='%23c9c5be'/></svg>">
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <header class="bar">
+    <div class="mark">
+      <span class="mark__word">Pigment</span>
+      <span class="mark__sub">a color instrument</span>
+    </div>
+
+    <nav class="harmony" id="harmony" role="radiogroup" aria-label="Harmony rule"></nav>
+
+    <div class="tools">
+      <button class="btn btn--primary" id="gen" title="Generate (Space)"><span class="k">Space</span> Generate</button>
+      <button class="btn" id="undo" title="Undo (Z)" aria-label="Undo">&#8630;</button>
+      <button class="btn" id="redo" title="Redo (Shift+Z)" aria-label="Redo">&#8631;</button>
+      <label class="btn btn--file" title="Extract from image (I)">
+        Image<input type="file" id="file" accept="image/*" hidden>
+      </label>
+      <button class="btn" id="save" title="Save to library (S)">Save</button>
+      <button class="btn" id="share" title="Copy share link">Share</button>
+      <select class="btn btn--sel" id="cvd" title="Color-vision simulation" aria-label="Color-vision simulation">
+        <option value="">Normal vision</option>
+        <option value="protanopia">Protanopia</option>
+        <option value="deuteranopia">Deuteranopia</option>
+        <option value="tritanopia">Tritanopia</option>
+        <option value="achromatopsia">Achromatopsia</option>
+      </select>
+      <button class="btn btn--icon" id="dockToggle" title="Toggle panel (\)" aria-label="Toggle panel">&#9648;</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <div class="strip" id="strip"></div>
+  </main>
+
+  <aside class="dock" id="dock">
+    <nav class="tabs" id="tabs" role="tablist">
+      <button class="tab is-on" data-pane="inspect" role="tab" title="Inspect (Q)">Inspect</button>
+      <button class="tab" data-pane="preview" role="tab" title="Preview (W)">Preview</button>
+      <button class="tab" data-pane="contrast" role="tab" title="Contrast (E)">Contrast</button>
+      <button class="tab" data-pane="export" role="tab" title="Export (X)">Export</button>
+      <button class="tab" data-pane="library" role="tab" title="Library (L)">Library</button>
+    </nav>
+    <div class="panes" id="panes">
+      <section class="pane is-on" id="pane-inspect"></section>
+      <section class="pane" id="pane-preview"></section>
+      <section class="pane" id="pane-contrast"></section>
+      <section class="pane" id="pane-export"></section>
+      <section class="pane" id="pane-library"></section>
+    </div>
+  </aside>
+
+  <footer class="status">
+    <span class="status__keys">
+      <b>Space</b> generate · <b>1–5</b> lock · <b>C</b> copy · <b>Z</b> undo · <b>S</b> save · <b>\</b> panel
+    </span>
+    <span class="status__spacer"></span>
+    <span class="status__stat" id="statRule">—</span>
+    <span class="status__stat" id="statContrast">—</span>
+    <button class="status__motion" id="motion" title="Toggle motion">motion: on</button>
+  </footer>
+
+</div>
+
+<div class="drop" id="drop"><div class="drop__inner">Drop an image to extract a palette</div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<canvas id="canvas" hidden></canvas>
+
+<script src="app.js"></script>
+</body>
+</html>
