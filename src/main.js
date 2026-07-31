@@ -781,6 +781,11 @@ function setPane(name) {
 /* ---------------- status ---------------- */
 
 function updateStatus() {
+  // keep the rule selector honest — a pasted share link changes state.harmony
+  // without going through the buttons
+  document.querySelectorAll('#harmony button').forEach((b) =>
+    b.setAttribute('aria-checked', b.dataset.key === state.harmony));
+  $('#cvd').value = state.cvd;
   $('#statRule').textContent = HARMONIES[state.harmony].label.toUpperCase();
   let lo = Infinity, hi = 0;
   for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
@@ -834,15 +839,10 @@ function buildHarmony() {
   const nav = $('#harmony');
   Object.entries(HARMONIES).forEach(([key, { label }]) => {
     const b = el('button', null, label);
+    b.dataset.key = key;
     b.setAttribute('role', 'radio');
     b.setAttribute('aria-checked', state.harmony === key);
-    b.onclick = () => {
-      state.harmony = key;
-      nav.querySelectorAll('button').forEach((x) => x.setAttribute('aria-checked', x === b));
-      syncURL();
-      updateStatus();
-      roll();
-    };
+    b.onclick = () => { state.harmony = key; roll(); };
     nav.append(b);
   });
 }
