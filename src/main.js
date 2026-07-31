@@ -109,15 +109,22 @@ function loadSnap(snap) {
   return true;
 }
 
-function syncURL() {
+/** The shareable address of the current palette. A real query string, not a
+    hash: it survives link unfurlers and needs no server rewrite. */
+function paletteURL() {
   const p = colors().map((c) => hex(c).slice(1)).join('-');
-  const url = `${location.pathname}#p=${p}&h=${state.harmony}`;
-  history.replaceState(null, '', url);
+  return `${location.origin}${location.pathname}?p=${p}&h=${state.harmony}`;
+}
+
+function syncURL() {
+  history.replaceState(null, '', paletteURL());
 }
 
 function readURL() {
-  const m = /p=([0-9a-f-]+)/i.exec(location.hash);
-  const h = /h=([a-z]+)/i.exec(location.hash);
+  // query string is canonical; the old #p= form still loads so early links keep working
+  const src = location.search.length > 1 ? location.search : location.hash;
+  const m = /[?#&]p=([0-9a-fA-F-]+)/.exec(src);
+  const h = /[?#&]h=([a-z]+)/i.exec(src);
   if (h && HARMONIES[h[1]]) state.harmony = h[1];
   if (!m) return false;
   return loadSnap(m[1]);
@@ -150,19 +157,236 @@ function toast(msg) {
   toastT = setTimeout(() => t.classList.remove('is-on'), 1500);
 }
 
+/** Returns whether the copy actually landed — never claim success we can't verify. */
 async function copy(text, label) {
+  let ok = false;
   try {
     await navigator.clipboard.writeText(text);
+    ok = true;
   } catch {
     const ta = el('textarea');
     ta.value = text;
-    ta.style.cssText = 'position:fixed;opacity:0';
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
     document.body.append(ta);
     ta.select();
-    document.execCommand('copy');
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
     ta.remove();
   }
-  toast(label || `Copied ${text}`);
+  toast(ok ? (label || `Copied ${text}`) : 'Press Ctrl+C to copy');
+  return ok;
+}
+
+/* ---------------- modal ---------------- */
+
+let closeModal = null;
+
+function modal(title, build) {
+  closeModal?.();
+  const back = el('div', 'modal');
+  const card = el('div', 'modal__card');
+  const head = el('div', 'modal__head');
+  head.append(el('h2', null, title));
+  const x = el('button', 'modal__x', '✕');
+  x.setAttribute('aria-label', 'Close');
+  head.append(x);
+  const body = el('div', 'modal__body');
+  card.append(head, body);
+  back.append(card);
+  document.body.append(back);
+
+  const done = () => {
+    back.classList.remove('is-on');
+    removeEventListener('keydown', onKey, true);
+    setTimeout(() => back.remove(), 200);
+    closeModal = null;
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); done(); }
+    if (e.key === ' ') e.stopPropagation();   // don't regenerate behind the sheet
+  };
+  addEventListener('keydown', onKey, true);
+  x.onclick = done;
+  back.onclick = (e) => { if (e.target === back) done(); };
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-modal', 'true');
+
+  closeModal = done;
+  build(body, done);
+  requestAnimationFrame(() => back.classList.add('is-on'));
+  return done;
+}
+
+/** A row of the current palette, used as the header of both sheets. */
+function paletteStrip(h = 54) {
+  const row = el('div', 'sheet__strip');
+  row.style.height = h + 'px';
+  state.sw.forEach((s, i) => {
+    const c = el('span');
+    c.style.setProperty('--i', i);
+    c.style.background = shex(s.color);
+    row.append(c);
+  });
+  return row;
+}
+
+/* ---------------- share ---------------- */
+
+/** Palette as a PNG — what people actually paste into Slack. */
+function paletteCanvas(scale = 2) {
+  const W = 1200, H = 630;
+  const cv = el('canvas');
+  cv.width = W * scale; cv.height = H * scale;
+  const g = cv.getContext('2d');
+  g.scale(scale, scale);
+  const ns = names();
+  const cw = W / N;
+  colors().forEach((c, i) => {
+    g.fillStyle = hex(c);
+    g.fillRect(i * cw, 0, Math.ceil(cw) + 1, H);
+    g.fillStyle = on(c);
+    g.globalAlpha = 1;
+    g.font = '500 30px "Geist Mono", ui-monospace, monospace';
+    g.fillText(hex(c).toUpperCase(), i * cw + 26, H - 66);
+    g.globalAlpha = 0.72;
+    g.font = 'italic 22px "Instrument Serif", Georgia, serif';
+    const name = ns[i].label;
+    let t = name;
+    while (g.measureText(t).width > cw - 52 && t.length > 4) t = t.slice(0, -2);
+    g.fillText(t + (t === name ? '' : '…'), i * cw + 26, H - 34);
+    g.globalAlpha = 1;
+  });
+  return cv;
+}
+
+function download(blobOrUrl, filename) {
+  const a = el('a');
+  a.href = typeof blobOrUrl === 'string' ? blobOrUrl : URL.createObjectURL(blobOrUrl);
+  a.download = filename;
+  a.click();
+  if (typeof blobOrUrl !== 'string') setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+function shareSheet() {
+  modal('Share this palette', (body) => {
+    body.append(paletteStrip());
+
+    const url = paletteURL();
+    const field = el('div', 'field');
+    const input = el('input', 'field__input');
+    input.value = url;
+    input.readOnly = true;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', 'Palette link');
+    // select all but keep the start of the URL in view
+    const selectAll = () => { input.setSelectionRange(0, input.value.length); input.scrollLeft = 0; };
+    input.onfocus = selectAll;
+    input.onclick = selectAll;
+    const cp = el('button', 'btn btn--primary', 'Copy');
+    cp.onclick = async () => {
+      selectAll();
+      const ok = await copy(url, 'Link copied');
+      cp.textContent = ok ? 'Copied' : 'Ctrl+C';
+      setTimeout(() => (cp.textContent = 'Copy'), 1600);
+    };
+    field.append(input, cp);
+    body.append(field);
+    body.append(el('p', 'sheet__note', 'Opens straight into the generator with these five colours and the same harmony rule.'));
+
+    const row = el('div', 'sheet__row');
+    const act = (label, fn) => { const b = el('button', 'btn', label); b.onclick = fn; row.append(b); };
+    act('Open in new tab', () => window.open(url, '_blank', 'noopener'));
+    act('Download PNG', () => {
+      paletteCanvas().toBlob((b) => { download(b, `pigment-${names()[0].key}.png`); toast('PNG downloaded'); }, 'image/png');
+    });
+    act('Download SVG', () => { download(svgSheet(), `pigment-${names()[0].key}.svg`); toast('SVG downloaded'); });
+    act('Copy hex list', () => copy(colors().map((c) => hex(c).toUpperCase()).join(', '), 'Hex list copied'));
+    if (navigator.share) {
+      act('Share…', () => navigator.share({ title: 'Pigment palette', text: names().map((n) => n.label).join(' · '), url }).catch(() => {}));
+    }
+    body.append(row);
+
+    setTimeout(() => { input.focus(); selectAll(); }, 60);
+  });
+}
+
+function svgSheet() {
+  const ns = names();
+  const w = 200, h = 320;
+  const esc = (s) => s.replace(/[<>&]/g, (m) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m]));
+  const body = colors().map((c, i) => {
+    const t = on(c);
+    return `<rect x="${i * w}" y="0" width="${w}" height="${h}" fill="${hex(c)}"/>` +
+      `<text x="${i * w + 20}" y="${h - 44}" fill="${t}" font-family="monospace" font-size="20">${hex(c).toUpperCase()}</text>` +
+      `<text x="${i * w + 20}" y="${h - 22}" fill="${t}" font-family="serif" font-style="italic" font-size="15" opacity=".7">${esc(ns[i].label)}</text>`;
+  }).join('');
+  return new Blob([`<svg xmlns="http://www.w3.org/2000/svg" width="${w * N}" height="${h}" viewBox="0 0 ${w * N} ${h}">${body}</svg>`], { type: 'image/svg+xml' });
+}
+
+/* ---------------- save ---------------- */
+
+function saveSheet() {
+  const p = colors().map((c) => hex(c).slice(1)).join('-');
+  const existing = lib().find((x) => x.p === p);
+  const ns = names();
+
+  modal(existing ? 'Already in your library' : 'Save to library', (body, done) => {
+    body.append(paletteStrip());
+
+    const field = el('div', 'field');
+    const input = el('input', 'field__input');
+    input.value = existing?.n || `${ns[0].label} & ${ns[N - 1].label}`;
+    input.maxLength = 60;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', 'Palette name');
+    input.placeholder = 'Name this palette';
+    const go = el('button', 'btn btn--primary', existing ? 'Rename' : 'Save');
+    field.append(input, go);
+    body.append(field);
+    body.append(el('p', 'sheet__note', 'Stored in this browser, on this device. Nothing leaves your machine.'));
+
+    const commitSave = () => {
+      const name = input.value.trim() || `${ns[0].label} & ${ns[N - 1].label}`;
+      const l = lib();
+      const hit = l.find((x) => x.p === p);
+      if (hit) hit.n = name;
+      else l.unshift({ p, h: state.harmony, n: name, t: Date.now() });
+      setLib(l);
+      done();
+      setPane('library');            // show the user it actually happened
+      flashLibrary(p);
+      toast(hit ? 'Renamed' : 'Saved to library');
+    };
+    go.onclick = commitSave;
+    input.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') commitSave();
+      if (e.key === 'Escape') done();
+    };
+
+    const row = el('div', 'sheet__row');
+    const share = el('button', 'btn', 'Share instead');
+    share.onclick = () => { done(); shareSheet(); };
+    row.append(share);
+    if (existing) {
+      const del = el('button', 'btn', 'Remove from library');
+      del.onclick = () => { setLib(lib().filter((x) => x.p !== p)); done(); setPane('library'); toast('Removed'); };
+      row.append(del);
+    }
+    body.append(row);
+
+    setTimeout(() => { input.focus(); input.select(); }, 60);
+  });
+}
+
+function flashLibrary(p) {
+  requestAnimationFrame(() => {
+    const items = document.querySelectorAll('#pane-library .lib__item');
+    const idx = lib().findIndex((x) => x.p === p);
+    const node = items[idx];
+    if (!node) return;
+    node.classList.add('is-new');
+    node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
 }
 
 /* ---------------- render: strip ---------------- */
@@ -687,46 +911,45 @@ function paneExport(root) {
     toast('Downloaded');
   };
   const sv = el('button', 'btn', 'SVG sheet');
-  sv.onclick = () => {
-    const ns = names();
-    const w = 200, h = 320;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w * N}" height="${h}" viewBox="0 0 ${w * N} ${h}">` +
-      colors().map((c, i) => {
-        const t = on(c);
-        return `<rect x="${i * w}" y="0" width="${w}" height="${h}" fill="${hex(c)}"/>` +
-          `<text x="${i * w + 20}" y="${h - 44}" fill="${t}" font-family="monospace" font-size="20">${hex(c).toUpperCase()}</text>` +
-          `<text x="${i * w + 20}" y="${h - 22}" fill="${t}" font-family="serif" font-style="italic" font-size="15" opacity=".7">${ns[i].label.replace(/[<>&]/g, '')}</text>`;
-      }).join('') + '</svg>';
-    const a = el('a');
-    a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-    a.download = `pigment-${names()[0].key}.svg`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast('SVG downloaded');
-  };
-  row.append(cp, dl, sv);
+  sv.onclick = () => { download(svgSheet(), `pigment-${names()[0].key}.svg`); toast('SVG downloaded'); };
+  const sh = el('button', 'btn', 'Share…');
+  sh.onclick = shareSheet;
+  row.append(cp, dl, sv, sh);
   root.append(row);
 }
 
+const ago = (t) => {
+  if (!t) return '';
+  const m = (Date.now() - t) / 6e4;
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m | 0}m ago`;
+  if (m < 1440) return `${(m / 60) | 0}h ago`;
+  return `${(m / 1440) | 0}d ago`;
+};
+
 function paneLibrary(root) {
-  const row = el('div');
-  row.style.cssText = 'display:flex;gap:6px;margin-bottom:14px';
-  const sv = el('button', 'btn btn--primary', 'Save current');
-  sv.onclick = savePalette;
-  const sh = el('button', 'btn', 'Copy link');
-  sh.onclick = () => copy(location.href, 'Share link copied');
+  const items = lib();
+  const current = colors().map((c) => hex(c).slice(1)).join('-');
+
+  const row = el('div', 'sheet__row');
+  row.style.marginBottom = '14px';
+  const sv = el('button', 'btn btn--primary', items.some((x) => x.p === current) ? 'Saved ✓' : 'Save current');
+  sv.onclick = saveSheet;
+  const sh = el('button', 'btn', 'Share');
+  sh.onclick = shareSheet;
   row.append(sv, sh);
   root.append(row);
 
-  root.append(el('div', 'eyebrow', `Saved · ${lib().length}`));
-  const items = lib();
+  root.append(el('div', 'eyebrow', `Saved · ${items.length}`));
   if (!items.length) {
-    root.append(el('div', 'empty', 'Nothing saved yet. Press S to keep a palette.'));
+    root.append(el('div', 'empty', 'Nothing saved yet — press S, or hit Save current above. Palettes are kept in this browser.'));
     return;
   }
+
   const wrap = el('div', 'lib');
   items.forEach((it, i) => {
     const card = el('div', 'lib__item');
+    if (it.p === current) card.classList.add('is-current');
     const sw = el('div', 'lib__sw');
     it.p.split('-').forEach((h) => {
       const s = el('span');
@@ -735,33 +958,37 @@ function paneLibrary(root) {
     });
     const foot = el('div', 'lib__foot');
     foot.append(el('span', 'lib__name', it.n));
-    const rule = el('span', 'ins__sub');
-    rule.textContent = (HARMONIES[it.h]?.label || '').toUpperCase();
-    rule.style.margin = '0';
-    foot.append(rule);
-    const x = el('button', 'lib__x', '✕');
-    x.title = 'Delete';
-    x.onclick = (e) => { e.stopPropagation(); const l = lib(); l.splice(i, 1); setLib(l); renderPane(); };
-    foot.append(x);
+    const meta = el('span', 'lib__meta');
+    meta.textContent = [(HARMONIES[it.h]?.label || '').toUpperCase(), ago(it.t)].filter(Boolean).join(' · ');
+    foot.append(meta);
+
+    const act = (label, title, fn) => {
+      const b = el('button', 'lib__x', label);
+      b.title = title;
+      b.onclick = (e) => { e.stopPropagation(); fn(); };
+      foot.append(b);
+    };
+    act('↗', 'Copy share link', () => {
+      copy(`${location.origin}${location.pathname}?p=${it.p}&h=${it.h || 'auto'}`, `Link to “${it.n}” copied`);
+    });
+    act('✕', 'Delete', () => {
+      const l = lib(); l.splice(i, 1); setLib(l); renderPane(); toast(`Deleted “${it.n}”`);
+    });
+
     card.append(sw, foot);
     card.onclick = () => {
-      if (loadSnap(it.p)) { state.harmony = it.h || 'auto'; state.sw.forEach((s) => (s.locked = false)); commit(); toast(`Loaded ${it.n}`); }
+      if (loadSnap(it.p)) {
+        state.harmony = it.h || 'auto';
+        state.sw.forEach((s) => (s.locked = false));
+        commit();
+        toast(`Loaded “${it.n}”`);
+      }
     };
     wrap.append(card);
   });
   root.append(wrap);
 }
 
-function savePalette() {
-  const p = colors().map((c) => hex(c).slice(1)).join('-');
-  const l = lib();
-  if (l.some((x) => x.p === p)) return toast('Already saved');
-  const ns = names();
-  l.unshift({ p, h: state.harmony, n: `${ns[0].label} & ${ns[N - 1].label}` });
-  setLib(l);
-  toast('Saved to library');
-  if (state.pane === 'library') renderPane();
-}
 
 const PANES = { inspect: paneInspect, preview: panePreview, contrast: paneContrast, export: paneExport, library: paneLibrary };
 
@@ -870,8 +1097,8 @@ function init() {
   $('#gen').onclick = roll;
   $('#undo').onclick = () => undo(-1);
   $('#redo').onclick = () => undo(1);
-  $('#save').onclick = savePalette;
-  $('#share').onclick = () => copy(location.href, 'Share link copied');
+  $('#save').onclick = saveSheet;
+  $('#share').onclick = shareSheet;
   $('#file').onchange = (e) => { fromImage(e.target.files[0]); e.target.value = ''; };
   $('#cvd').onchange = (e) => { state.cvd = e.target.value; render(); };
   $('#dockToggle').onclick = toggleDock;
@@ -902,9 +1129,12 @@ function init() {
     if (t && fromHex(t)) { state.sw[state.sel].color = fit(fromHex(t)); commit(); toast('Pasted ' + t); }
   });
 
-  addEventListener('hashchange', () => { if (readURL()) { commit(); } });
+  // a link pasted into this same tab, or back/forward
+  addEventListener('hashchange', () => { if (readURL()) commit(false); });
+  addEventListener('popstate', () => { if (readURL()) commit(false); });
 
   addEventListener('keydown', (e) => {
+    if (closeModal) return;               // a sheet is open; it owns the keyboard
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -916,7 +1146,8 @@ function init() {
     const l = k.toLowerCase();
     if (l === 'c') return copy(hex(state.sw[state.sel].color).toUpperCase());
     if (l === 'z') return undo(e.shiftKey ? 1 : -1);
-    if (l === 's') { e.preventDefault(); return savePalette(); }
+    if (l === 's') { e.preventDefault(); return saveSheet(); }
+    if (l === 'h') { e.preventDefault(); return shareSheet(); }
     if (l === 'i') return $('#file').click();
     if (l === 'r') return rollOne(state.sel);
     if (k === '\\') return toggleDock();

@@ -25,7 +25,13 @@ A palette generator that does the colour maths in **OKLCH**, not HSL. Live at
 - **Blends** — the interpolated road between the selected swatch and each of the others.
 - **Export** — CSS custom properties (hex + `oklch()`), Tailwind v4 `@theme` *and* a v3 config,
   JSON (with scales and contrast data), a plain hex list, and an SVG swatch sheet.
-- **Share** — the palette lives in the URL hash. **Save** — the library lives in localStorage.
+- **Share** — a sheet with the link in a field you can see and select, a copy button, open-in-new-tab,
+  a 1200×630 PNG card for pasting into chat, an SVG sheet, and native share where the browser has it.
+  The link is a plain query string (`?p=1b1d1f-c8543a-…&h=split`), so it survives link unfurlers
+  and needs no server rewrite. Old `#p=` links still load.
+- **Save** — a sheet that lets you *name* the palette, then drops you into the Library so you can
+  see it land. Saving the same palette again offers rename or remove instead of duplicating it.
+  Everything is localStorage; nothing leaves the device.
 
 ## Keyboard
 
@@ -37,7 +43,8 @@ A palette generator that does the colour maths in **OKLCH**, not HSL. Live at
 | `C` | copy the selected hex |
 | `R` | reroll just the selected swatch |
 | `Z` / `Shift+Z` | undo / redo |
-| `S` | save to library |
+| `S` | save to library (opens the save sheet) |
+| `H` | share sheet |
 | `I` | open the image picker |
 | `\` | collapse the panel |
 | `Q` `W` `E` `X` `L` | inspect · preview · contrast · export · library |
