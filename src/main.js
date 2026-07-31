@@ -180,10 +180,10 @@ async function copy(text, label) {
 
 let closeModal = null;
 
-function modal(title, build) {
+function modal(title, build, size) {
   closeModal?.();
   const back = el('div', 'modal');
-  const card = el('div', 'modal__card');
+  const card = el('div', 'modal__card' + (size ? ` modal__card--${size}` : ''));
   const head = el('div', 'modal__head');
   head.append(el('h2', null, title));
   const x = el('button', 'modal__x', '✕');
@@ -874,12 +874,304 @@ function exportText(fmt) {
   return `/* Tailwind v4 — app.css */\n@import "tailwindcss";\n\n@theme {\n${v4}\n}\n\n/* Tailwind v3 — tailwind.config.js */\n/*\nmodule.exports = {\n  theme: {\n    extend: {\n      colors: {\n${v3}\n      },\n    },\n  },\n};\n*/\n`;
 }
 
+/* ---------------- extra formats ---------------- */
+
+const asciiSafe = (s) => s.replace(/[^\x20-\x7E]/g, '');
+
+function scssText() {
+  const ns = names();
+  const vars = colors().map((c, i) => `$${ns[i].key}: ${hex(c)};`).join('\n');
+  const map = colors().map((c, i) => `  '${ns[i].key}': $${ns[i].key},`).join('\n');
+  const scales = colors().map((c, i) =>
+    `$${ns[i].key}-scale: (\n${scale(c).map((s, j) => `  ${STEPS[j]}: ${hex(s)},`).join('\n')}\n);`).join('\n\n');
+  return `// Pigment — ${HARMONIES[state.harmony].label} palette\n${vars}\n\n$palette: (\n${map}\n);\n\n${scales}\n`;
+}
+
+const CODE_LANGS = {
+  js: () => `// Pigment — ${HARMONIES[state.harmony].label}\nexport const palette = {\n` +
+    names().map((n, i) => `  ${n.key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())}: '${hex(colors()[i])}',`).join('\n') + '\n};\n',
+  swift: () => `// Pigment — ${HARMONIES[state.harmony].label}\nimport SwiftUI\n\nextension Color {\n` +
+    names().map((n, i) => {
+      const r = toRgb(fit(colors()[i]));
+      const cc = n.key.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      return `    static let ${cc} = Color(red: ${r.r.toFixed(3)}, green: ${r.g.toFixed(3)}, blue: ${r.b.toFixed(3)})`;
+    }).join('\n') + '\n}\n',
+  kotlin: () => `// Pigment — ${HARMONIES[state.harmony].label}\nimport androidx.compose.ui.graphics.Color\n\n` +
+    names().map((n, i) => {
+      const cc = n.key.replace(/(^|-)([a-z])/g, (_, __, c) => c.toUpperCase());
+      return `val ${cc} = Color(0xFF${hex(colors()[i]).slice(1).toUpperCase()})`;
+    }).join('\n') + '\n',
+  xml: () => `<?xml version="1.0" encoding="utf-8"?>\n<!-- Pigment — ${HARMONIES[state.harmony].label} -->\n<resources>\n` +
+    names().map((n, i) => `    <color name="${n.key.replace(/-/g, '_')}">${hex(colors()[i]).toUpperCase()}</color>`).join('\n') +
+    '\n</resources>\n',
+  flutter: () => `// Pigment — ${HARMONIES[state.harmony].label}\nimport 'package:flutter/material.dart';\n\n` +
+    names().map((n, i) => {
+      const cc = n.key.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      return `const Color ${cc} = Color(0xFF${hex(colors()[i]).slice(1).toUpperCase()});`;
+    }).join('\n') + '\n',
+  python: () => `# Pigment — ${HARMONIES[state.harmony].label}\nPALETTE = {\n` +
+    names().map((n, i) => `    "${n.key.replace(/-/g, '_')}": "${hex(colors()[i])}",`).join('\n') + '\n}\n',
+};
+
+function embedHTML() {
+  const ns = names();
+  const cells = colors().map((c, i) =>
+    `    <div style="flex:1;background:${hex(c)};color:${on(c)};padding:14px 10px;font:12px/1.4 ui-monospace,monospace">` +
+    `${hex(c).toUpperCase()}<br><span style="opacity:.7;font-style:italic">${asciiSafe(ns[i].label)}</span></div>`).join('\n');
+  return `<!-- Pigment palette -->\n<a href="${paletteURL()}" style="display:block;text-decoration:none" target="_blank" rel="noopener">\n` +
+    `  <div style="display:flex;border-radius:3px;overflow:hidden;max-width:640px">\n${cells}\n  </div>\n</a>\n`;
+}
+
+/** GIMP / Inkscape / Krita palette. */
+function gplText() {
+  const ns = names();
+  return `GIMP Palette\nName: Pigment ${asciiSafe(ns[0].label)}\nColumns: ${N}\n#\n` +
+    colors().map((c, i) => {
+      const r = toRgb(fit(c));
+      const v = (x) => String(Math.round(x * 255)).padStart(3, ' ');
+      return `${v(r.r)} ${v(r.g)} ${v(r.b)}\t${asciiSafe(ns[i].label)}`;
+    }).join('\n') + '\n';
+}
+
+function sketchText() {
+  return JSON.stringify({
+    compatibleVersion: '2.0',
+    pluginVersion: '2.14',
+    colors: colors().map((c) => {
+      const r = toRgb(fit(c));
+      return { red: +r.r.toFixed(5), green: +r.g.toFixed(5), blue: +r.b.toFixed(5), alpha: 1 };
+    }),
+  }, null, 2);
+}
+
+/** Adobe Swatch Exchange — binary, names in UTF-16BE, colours as float32 RGB. */
+function aseBlob() {
+  const ns = names().map((n) => asciiSafe(n.label) || 'Colour');
+  let size = 12;
+  ns.forEach((n) => { size += 6 + 2 + (n.length + 1) * 2 + 4 + 12 + 2; });
+  const buf = new ArrayBuffer(size);
+  const v = new DataView(buf);
+  let o = 0;
+  const u8 = (x) => { v.setUint8(o, x); o += 1; };
+  const u16 = (x) => { v.setUint16(o, x); o += 2; };
+  const u32 = (x) => { v.setUint32(o, x); o += 4; };
+  const f32 = (x) => { v.setFloat32(o, x); o += 4; };
+
+  'ASEF'.split('').forEach((ch) => u8(ch.charCodeAt(0)));
+  u16(1); u16(0);                       // version 1.0
+  u32(ns.length);                       // block count
+
+  colors().forEach((c, i) => {
+    const name = ns[i];
+    u16(0x0001);                        // colour entry
+    u32(2 + (name.length + 1) * 2 + 4 + 12 + 2);
+    u16(name.length + 1);
+    for (const ch of name) u16(ch.charCodeAt(0));
+    u16(0);                             // null terminator
+    'RGB '.split('').forEach((ch) => u8(ch.charCodeAt(0)));
+    const r = toRgb(fit(c));
+    f32(r.r); f32(r.g); f32(r.b);
+    u16(0);                             // global
+  });
+  return new Blob([buf], { type: 'application/octet-stream' });
+}
+
+/** A one-page A4 PDF, written by hand — no library, no server. */
+function pdfBlob() {
+  const W = 595, H = 842;
+  const ns = names();
+  const cols = colors();
+  const esc = (s) => asciiSafe(s).replace(/([\\()])/g, '\\$1');
+  const rgb = (c) => { const r = toRgb(fit(c)); return `${r.r.toFixed(3)} ${r.g.toFixed(3)} ${r.b.toFixed(3)}`; };
+
+  let s = '';
+  const rect = (c, x, y, w, h) => { s += `${rgb(c)} rg ${x.toFixed(1)} ${y.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)} re f\n`; };
+  const text = (str, x, y, font, size, c) => {
+    s += `BT ${rgb(c)} rg /${font} ${size} Tf ${x.toFixed(1)} ${y.toFixed(1)} Td (${esc(str)}) Tj ET\n`;
+  };
+  const ink = { mode: 'oklch', l: 0.18, c: 0, h: 0 };
+  const dim = { mode: 'oklch', l: 0.55, c: 0, h: 0 };
+
+  // masthead
+  text('Pigment', 46, H - 62, 'F2', 22, ink);
+  text(`${asciiSafe(ns[0].label)}  /  ${asciiSafe(ns[N - 1].label)}`, 46, H - 82, 'F3', 10, dim);
+  text(HARMONIES[state.harmony].label.toUpperCase(), W - 46 - HARMONIES[state.harmony].label.length * 5.6, H - 62, 'F1', 9, dim);
+
+  // the palette band
+  const bandY = H - 300, bandH = 190, cw = (W - 92) / N;
+  cols.forEach((c, i) => rect(c, 46 + i * cw, bandY, cw + 0.5, bandH));
+  cols.forEach((c, i) => {
+    const t = wcag(c, { mode: 'oklch', l: 0, c: 0, h: 0 }) >= wcag(c, { mode: 'oklch', l: 1, c: 0, h: 0 })
+      ? { mode: 'oklch', l: 0, c: 0, h: 0 } : { mode: 'oklch', l: 1, c: 0, h: 0 };
+    text(hex(c).toUpperCase(), 46 + i * cw + 9, bandY + 20, 'F1', 10, t);
+  });
+
+  // scale legend, once
+  const sw = 15, sx = W - 46 - 11 * sw;
+  STEPS.forEach((st, j) => text(String(st), sx + j * sw + 1, bandY - 22, 'F1', 5.5, dim));
+
+  // per-colour rows with their scales
+  let y = bandY - 42;
+  cols.forEach((c, i) => {
+    const f = fit(c);
+    rect(c, 46, y - 12, 26, 26);
+    text(hex(c).toUpperCase(), 82, y + 2, 'F1', 11, ink);
+    text(asciiSafe(ns[i].label), 82, y - 10, 'F3', 9, dim);
+    text(`oklch(${(f.l * 100).toFixed(1)}% ${f.c.toFixed(3)} ${(f.h || 0).toFixed(1)})`, 196, y + 2, 'F1', 8, dim);
+    text(rgbStr(c), 196, y - 10, 'F1', 8, dim);
+    scale(c).forEach((st, j) => rect(st, sx + j * sw + 0.2, y - 12, sw - 0.4, 26));
+    y -= 46;
+  });
+
+  // contrast matrix — text colour on background colour, WCAG 2.1
+  y -= 16;
+  text('CONTRAST  ·  WCAG 2.1  ·  text on background', 46, y, 'F1', 8, dim);
+  y -= 16;
+  const cellW = 46, cellH = 22;
+  cols.forEach((_, j) => text(String(j + 1), 46 + 22 + j * cellW + cellW / 2 - 2, y, 'F1', 6.5, dim));
+  y -= cellH;
+  cols.forEach((rowC, i) => {
+    text(String(i + 1), 46 + 8, y + 8, 'F1', 6.5, dim);
+    cols.forEach((colC, j) => {
+      const x = 46 + 22 + j * cellW;
+      rect(colC, x, y, cellW - 1.5, cellH - 1.5);
+      if (i !== j) {
+        const r = wcag(rowC, colC);
+        text(r.toFixed(2), x + 6, y + 12, 'F1', 7.5, rowC);
+        text(wcagGrade(r), x + 6, y + 4, 'F1', 5, rowC);
+      }
+    });
+    y -= cellH;
+  });
+
+  text(paletteURL(), 46, 52, 'F1', 7.5, dim);
+  text('Generated with Pigment - a color instrument', 46, 38, 'F3', 7.5, dim);
+
+  const objs = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[3 0 R]/Count 1>>',
+    `<</Type/Page/Parent 2 0 R/MediaBox[0 0 ${W} ${H}]/Resources<</Font<</F1 5 0 R/F2 6 0 R/F3 7 0 R>>>>/Contents 4 0 R>>`,
+    `<</Length ${s.length}>>\nstream\n${s}endstream`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Courier>>',
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Bold>>',
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Oblique>>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objs.forEach((o, i) => { offsets.push(pdf.length); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  offsets.forEach((off) => { pdf += String(off).padStart(10, '0') + ' 00000 n \n'; });
+  pdf += `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF`;
+  return new Blob([pdf], { type: 'application/pdf' });
+}
+
 function highlight(text) {
   return text
     .replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]))
     .replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="c-com">$1</span>')
     .replace(/(#[0-9a-fA-F]{6}|oklch\([^)]*\)|rgb\([^)]*\)|hsl\([^)]*\))/g, '<span class="c-val">$1</span>')
     .replace(/(--[a-z0-9-]+|"[a-z]+":)/g, '<span class="c-key">$1</span>');
+}
+
+/* ---------------- export sheet ---------------- */
+
+const GLYPH = {
+  link: '<path d="M7 13h6M9.5 8H6a4 4 0 0 0 0 8h3.5M14.5 8H18a4 4 0 0 1 0 8h-3.5"/>',
+  share: '<path d="M12 15V4M12 4 8 8M12 4l4 4M5 13v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"/>',
+  image: '<path d="M4 5h16v14H4zM4 15l4.5-4.5 4 4L16 11l4 4"/>',
+  doc: '<path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6"/>',
+  code: '<path d="M9 8 5 12l4 4M15 8l4 4-4 4"/>',
+  down: '<path d="M12 4v11M8 11l4 4 4-4M5 20h14"/>',
+  grid: '<path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/>',
+};
+
+const EXPORTS = [
+  { key: 'url',      label: 'URL',      hint: 'shareable link',      glyph: 'link',  run: () => copy(paletteURL(), 'Link copied') },
+  { key: 'share',    label: 'Share',    hint: 'link, PNG, social',   glyph: 'share', run: (done) => { done(); shareSheet(); } },
+  { key: 'image',    label: 'Image',    hint: 'PNG · 1200×630',      glyph: 'image', run: () => paletteCanvas().toBlob((b) => { download(b, `pigment-${names()[0].key}.png`); toast('PNG downloaded'); }, 'image/png') },
+  { key: 'pdf',      label: 'PDF',      hint: 'A4 spec sheet',       glyph: 'doc',   run: () => { download(pdfBlob(), `pigment-${names()[0].key}.pdf`); toast('PDF downloaded'); } },
+
+  { key: 'css',      label: 'CSS',      hint: 'custom properties',   glyph: 'code',  text: () => exportText('css'),      ext: 'css' },
+  { key: 'tailwind', label: 'Tailwind', hint: 'v4 theme + v3 config', glyph: 'code', text: () => exportText('tailwind'), ext: 'css' },
+  { key: 'scss',     label: 'SCSS',     hint: 'variables + map',     glyph: 'code',  text: scssText,                     ext: 'scss' },
+  { key: 'json',     label: 'JSON',     hint: 'scales & contrast',   glyph: 'code',  text: () => exportText('json'),     ext: 'json' },
+
+  { key: 'svg',      label: 'SVG',      hint: 'vector swatch sheet', glyph: 'down',  run: () => { download(svgSheet(), `pigment-${names()[0].key}.svg`); toast('SVG downloaded'); } },
+  { key: 'ase',      label: 'ASE',      hint: 'Adobe swatches',      glyph: 'down',  run: () => { download(aseBlob(), `pigment-${names()[0].key}.ase`); toast('ASE downloaded'); } },
+  { key: 'gpl',      label: 'GPL',      hint: 'GIMP · Inkscape',     glyph: 'down',  run: () => { download(new Blob([gplText()], { type: 'text/plain' }), `pigment-${names()[0].key}.gpl`); toast('GPL downloaded'); } },
+  { key: 'code',     label: 'Code',     hint: 'JS · Swift · Kotlin', glyph: 'grid',  langs: true, ext: 'txt' },
+
+  { key: 'embed',    label: 'Embed',    hint: 'HTML snippet',        glyph: 'grid',  text: embedHTML,   ext: 'html' },
+  { key: 'hex',      label: 'Hex',      hint: 'plain list',          glyph: 'code',  text: () => exportText('hex'), ext: 'txt' },
+  { key: 'sketch',   label: 'Sketch',   hint: '.sketchpalette',      glyph: 'down',  run: () => { download(new Blob([sketchText()], { type: 'application/json' }), `pigment-${names()[0].key}.sketchpalette`); toast('Sketch palette downloaded'); } },
+  { key: 'x',        label: 'X',        hint: 'post the link',       glyph: 'share', run: () => {
+      const text = `${names().map((n) => n.label).join(' · ')} — a palette from Pigment`;
+      window.open(`https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(paletteURL())}`, '_blank', 'noopener,width=600,height=520');
+    } },
+];
+
+function exportSheet() {
+  modal('Export palette', (body, done) => {
+    const grid = el('div', 'tiles');
+    EXPORTS.forEach((def) => {
+      const t = el('button', 'tile');
+      const mark = svg('svg', { viewBox: '0 0 24 24', class: 'tile__glyph' });
+      mark.innerHTML = GLYPH[def.glyph];
+      t.append(mark, el('b', null, def.label), el('span', null, def.hint));
+      t.onclick = () => (def.run ? def.run(done) : exportDetail(def));
+      grid.append(t);
+    });
+    body.append(grid);
+
+    const strip = paletteStrip(30);
+    strip.style.margin = '18px 0 0';
+    body.append(strip);
+  }, 'wide');
+}
+
+function exportDetail(def) {
+  modal(def.label, (body) => {
+    let lang = 'js';
+    const pre = el('pre', 'code');
+    const get = () => (def.langs ? CODE_LANGS[lang]() : def.text());
+    const paint = () => { pre.innerHTML = highlight(get()); };
+
+    if (def.langs) {
+      const seg = el('div', 'seg');
+      Object.keys(CODE_LANGS).forEach((k) => {
+        const b = el('button', k === lang ? 'is-on' : '', { js: 'JS', swift: 'Swift', kotlin: 'Kotlin', xml: 'XML', flutter: 'Flutter', python: 'Python' }[k]);
+        b.onclick = () => {
+          lang = k;
+          seg.querySelectorAll('button').forEach((x) => x.classList.toggle('is-on', x === b));
+          paint();
+        };
+        seg.append(b);
+      });
+      body.append(seg);
+    }
+
+    paint();
+    body.append(pre);
+
+    const row = el('div', 'sheet__row');
+    const cp = el('button', 'btn btn--primary', 'Copy');
+    cp.onclick = async () => {
+      const ok = await copy(get(), `${def.label} copied`);
+      cp.textContent = ok ? 'Copied' : 'Ctrl+C';
+      setTimeout(() => (cp.textContent = 'Copy'), 1600);
+    };
+    const dl = el('button', 'btn', 'Download');
+    dl.onclick = () => {
+      const ext = def.langs ? { js: 'js', swift: 'swift', kotlin: 'kt', xml: 'xml', flutter: 'dart', python: 'py' }[lang] : def.ext;
+      download(new Blob([get()], { type: 'text/plain' }), `pigment-${names()[0].key}.${ext}`);
+      toast('Downloaded');
+    };
+    const back = el('button', 'btn', '← All formats');
+    back.onclick = exportSheet;
+    row.append(cp, dl, back);
+    body.append(row);
+  }, 'wide');
 }
 
 function paneExport(root) {
@@ -912,10 +1204,14 @@ function paneExport(root) {
   };
   const sv = el('button', 'btn', 'SVG sheet');
   sv.onclick = () => { download(svgSheet(), `pigment-${names()[0].key}.svg`); toast('SVG downloaded'); };
-  const sh = el('button', 'btn', 'Share…');
-  sh.onclick = shareSheet;
-  row.append(cp, dl, sv, sh);
+  row.append(cp, dl, sv);
   root.append(row);
+
+  const more = el('button', 'btn btn--wide', 'All export formats  →');
+  more.onclick = exportSheet;
+  more.style.marginTop = '8px';
+  root.append(more);
+  root.append(el('p', 'sheet__note', 'PDF, ASE, SVG, GPL, SCSS, embed code, and snippets for Swift, Kotlin, Flutter, Android and Python.'));
 }
 
 const ago = (t) => {
@@ -1099,6 +1395,7 @@ function init() {
   $('#redo').onclick = () => undo(1);
   $('#save').onclick = saveSheet;
   $('#share').onclick = shareSheet;
+  $('#export').onclick = exportSheet;
   $('#file').onchange = (e) => { fromImage(e.target.files[0]); e.target.value = ''; };
   $('#cvd').onchange = (e) => { state.cvd = e.target.value; render(); };
   $('#dockToggle').onclick = toggleDock;
@@ -1151,9 +1448,9 @@ function init() {
     if (l === 'i') return $('#file').click();
     if (l === 'r') return rollOne(state.sel);
     if (k === '\\') return toggleDock();
-    const idx = ['inspect', 'preview', 'contrast', 'export', 'library'].indexOf(
-      { q: 'inspect', w: 'preview', e: 'contrast', x: 'export', l: 'library' }[l]);
-    if (idx >= 0) setPane(['inspect', 'preview', 'contrast', 'export', 'library'][idx]);
+    if (l === 'x') { e.preventDefault(); return exportSheet(); }
+    const pane = { q: 'inspect', w: 'preview', e: 'contrast', l: 'library' }[l];
+    if (pane) setPane(pane);
   });
 
   setPane('inspect');

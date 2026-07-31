@@ -23,8 +23,12 @@ A palette generator that does the colour maths in **OKLCH**, not HSL. Live at
   (Machado 2009 matrices, applied in linear RGB). View-only; your hexes never change.
 - **Preview** — the palette mapped onto a real interface, light or dark.
 - **Blends** — the interpolated road between the selected swatch and each of the others.
-- **Export** — CSS custom properties (hex + `oklch()`), Tailwind v4 `@theme` *and* a v3 config,
-  JSON (with scales and contrast data), a plain hex list, and an SVG swatch sheet.
+- **Export** — sixteen destinations in one sheet, all generated in the browser with no server:
+  URL · Share · PNG · **PDF** · CSS · Tailwind · SCSS · JSON · SVG · **ASE** · **GPL** ·
+  Code · Embed · Hex · **Sketch** · X.
+  The PDF is a hand-written A4 spec sheet (palette band, per-colour OKLCH/RGB, 11-step scales,
+  and a WCAG contrast matrix) — no PDF library. ASE is real binary Adobe Swatch Exchange.
+  **Code** covers JS, Swift, Kotlin/Compose, Android XML, Flutter and Python.
 - **Share** — a sheet with the link in a field you can see and select, a copy button, open-in-new-tab,
   a 1200×630 PNG card for pasting into chat, an SVG sheet, and native share where the browser has it.
   The link is a plain query string (`?p=1b1d1f-c8543a-…&h=split`), so it survives link unfurlers
@@ -45,9 +49,10 @@ A palette generator that does the colour maths in **OKLCH**, not HSL. Live at
 | `Z` / `Shift+Z` | undo / redo |
 | `S` | save to library (opens the save sheet) |
 | `H` | share sheet |
+| `X` | export sheet |
 | `I` | open the image picker |
 | `\` | collapse the panel |
-| `Q` `W` `E` `X` `L` | inspect · preview · contrast · export · library |
+| `Q` `W` `E` `L` | inspect · preview · contrast · library |
 
 ## Build
 
